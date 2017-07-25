@@ -2,16 +2,13 @@ package com.orangefunction.tomcat.redissessions;
 
 import org.apache.catalina.Lifecycle;
 import org.apache.catalina.LifecycleException;
-import org.apache.catalina.LifecycleListener;
-import org.apache.catalina.util.LifecycleSupport;
 import org.apache.catalina.LifecycleState;
 import org.apache.catalina.Loader;
-import org.apache.catalina.Valve;
 import org.apache.catalina.Session;
+import org.apache.catalina.Valve;
 import org.apache.catalina.session.ManagerBase;
-
-import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
-import org.apache.commons.pool2.impl.BaseObjectPoolConfig;
+import org.apache.juli.logging.Log;
+import org.apache.juli.logging.LogFactory;
 
 import redis.clients.util.Pool;
 import redis.clients.jedis.JedisPool;
@@ -22,16 +19,11 @@ import redis.clients.jedis.Protocol;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.Set;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
-
-import org.apache.juli.logging.Log;
-import org.apache.juli.logging.LogFactory;
-
 
 public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
@@ -77,11 +69,6 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
   protected String serializationStrategyClass = "com.orangefunction.tomcat.redissessions.JavaSerializer";
 
   protected EnumSet<SessionPersistPolicy> sessionPersistPoliciesSet = EnumSet.of(SessionPersistPolicy.DEFAULT);
-
-  /**
-   * The lifecycle event support for this component.
-   */
-  protected LifecycleSupport lifecycle = new LifecycleSupport(this);
 
   public String getHost() {
     return host;
@@ -210,11 +197,7 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
   }
 
   protected void returnConnection(Jedis jedis, Boolean error) {
-    if (error) {
-      connectionPool.returnBrokenResource(jedis);
-    } else {
-      connectionPool.returnResource(jedis);
-    }
+    jedis.close();
   }
 
   protected void returnConnection(Jedis jedis) {
@@ -232,36 +215,6 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
   }
 
   /**
-   * Add a lifecycle event listener to this component.
-   *
-   * @param listener The listener to add
-   */
-  @Override
-  public void addLifecycleListener(LifecycleListener listener) {
-    lifecycle.addLifecycleListener(listener);
-  }
-
-  /**
-   * Get the lifecycle listeners associated with this lifecycle. If this
-   * Lifecycle has no listeners registered, a zero-length array is returned.
-   */
-  @Override
-  public LifecycleListener[] findLifecycleListeners() {
-    return lifecycle.findLifecycleListeners();
-  }
-
-
-  /**
-   * Remove a lifecycle event listener from this component.
-   *
-   * @param listener The listener to remove
-   */
-  @Override
-  public void removeLifecycleListener(LifecycleListener listener) {
-    lifecycle.removeLifecycleListener(listener);
-  }
-
-  /**
    * Start this component and implement the requirements
    * of {@link org.apache.catalina.util.LifecycleBase#startInternal()}.
    *
@@ -275,7 +228,7 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
     setState(LifecycleState.STARTING);
 
     Boolean attachedToValve = false;
-    for (Valve valve : getContainer().getPipeline().getValves()) {
+    for (Valve valve : getContext().getPipeline().getValves()) {
       if (valve instanceof RedisSessionHandlerValve) {
         this.handlerValve = (RedisSessionHandlerValve) valve;
         this.handlerValve.setRedisSessionManager(this);
@@ -302,9 +255,7 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
     initializeDatabaseConnection();
 
-    setDistributable(true);
   }
-
 
   /**
    * Stop this component and implement the requirements
@@ -542,7 +493,7 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
       if (log.isTraceEnabled()) {
         log.trace("Session Contents [" + id + "]:");
-        Enumeration en = session.getAttributeNames();
+        Enumeration<String> en = session.getAttributeNames();
         while(en.hasMoreElements()) {
           log.trace("  " + en.nextElement());
         }
@@ -585,7 +536,7 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
       if (log.isTraceEnabled()) {
         log.trace("Session Contents [" + redisSession.getId() + "]:");
-        Enumeration en = redisSession.getAttributeNames();
+        Enumeration<String> en = redisSession.getAttributeNames();
         while(en.hasMoreElements()) {
           log.trace("  " + en.nextElement());
         }
@@ -636,6 +587,10 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
     } finally {
       return error;
     }
+  }
+
+  private int getMaxInactiveInterval() {
+    return getContext().getSessionTimeout() * 60;
   }
 
   @Override
@@ -714,8 +669,8 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
     Loader loader = null;
 
-    if (getContainer() != null) {
-      loader = getContainer().getLoader();
+    if (getContext() != null) {
+      loader = getContext().getLoader();
     }
 
     ClassLoader classLoader = null;
@@ -725,7 +680,6 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
     }
     serializer.setClassLoader(classLoader);
   }
-
 
   // Connection Pool Config Accessors
 
@@ -755,15 +709,16 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
     this.connectionPoolConfig.setMinIdle(connectionPoolMinIdle);
   }
 
-
   // - from org.apache.commons.pool2.impl.BaseObjectPoolConfig
 
   public boolean getLifo() {
     return this.connectionPoolConfig.getLifo();
   }
+
   public void setLifo(boolean lifo) {
     this.connectionPoolConfig.setLifo(lifo);
   }
+
   public long getMaxWaitMillis() {
     return this.connectionPoolConfig.getMaxWaitMillis();
   }
@@ -859,9 +814,11 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
   public void setJmxEnabled(boolean jmxEnabled) {
     this.connectionPoolConfig.setJmxEnabled(jmxEnabled);
   }
+
   public String getJmxNameBase() {
     return this.connectionPoolConfig.getJmxNameBase();
   }
+
   public void setJmxNameBase(String jmxNameBase) {
     this.connectionPoolConfig.setJmxNameBase(jmxNameBase);
   }
